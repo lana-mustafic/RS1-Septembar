@@ -1,0 +1,44 @@
+<!--
+  KOSTUR. Layout je dat. Kontrole filtera, paginator i akcije nisu povezane.
+  Tabela prikazuje DEMO redove iz komponente.
+-->
+<section class="exam-page">
+  <header>
+    <div><h1>Rezervacije proizvoda</h1><p>Upravljanje rezervisanim količinama po proizvodu</p></div>
+    <button mat-flat-button color="primary" (click)="add()"><mat-icon>add</mat-icon>Nova rezervacija</button>
+  </header>
+
+  <div class="filters">
+    <!-- TODO (student): povezati filter proizvoda i checkbox sa zahtjevom prema API-ju. -->
+    <mat-form-field appearance="outline">
+      <mat-label>Proizvod</mat-label>
+      <mat-select>
+        <mat-option [value]="undefined">Svi proizvodi</mat-option>
+        @for (product of products; track product.id) {
+          <mat-option [value]="product.id">{{ product.name }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <mat-checkbox>Samo aktivne</mat-checkbox>
+  </div>
+
+  <div class="table-wrap">
+    <div class="loading" *ngIf="isLoading">Učitavanje...</div>
+    <table mat-table [dataSource]="rows">
+      <ng-container matColumnDef="code"><th mat-header-cell *matHeaderCellDef>Oznaka</th><td mat-cell *matCellDef="let row"><strong>{{ row.code }}</strong></td></ng-container>
+      <ng-container matColumnDef="product"><th mat-header-cell *matHeaderCellDef>Proizvod</th><td mat-cell *matCellDef="let row">{{ row.productName }}</td></ng-container>
+      <ng-container matColumnDef="price"><th mat-header-cell *matHeaderCellDef>Cijena</th><td mat-cell *matCellDef="let row">{{ row.productPrice | number:'1.2-2' }} KM</td></ng-container>
+      <ng-container matColumnDef="quantity"><th mat-header-cell *matHeaderCellDef>Količina</th><td mat-cell *matCellDef="let row">{{ row.quantity }}</td></ng-container>
+      <ng-container matColumnDef="value"><th mat-header-cell *matHeaderCellDef>Vrijednost</th><td mat-cell *matCellDef="let row"><strong>{{ row.reservationValue | number:'1.2-2' }} KM</strong></td></ng-container>
+      <ng-container matColumnDef="reservedUntil"><th mat-header-cell *matHeaderCellDef>Važi do</th><td mat-cell *matCellDef="let row">{{ row.reservedUntilUtc | date:'dd.MM.yyyy':'UTC' }}</td></ng-container>
+      <ng-container matColumnDef="state"><th mat-header-cell *matHeaderCellDef>Status</th><td mat-cell *matCellDef="let row"><span class="status" [class.active]="row.state === stateType.Aktivna" [class.expired]="row.state === stateType.Istekla" [class.disabled]="row.state === stateType.Otkazana">{{ stateLabel(row.state) }}</span></td></ng-container>
+      <!-- TODO (student): dugme Obriši omogućiti samo za otkazane rezervacije. -->
+      <ng-container matColumnDef="actions"><th mat-header-cell *matHeaderCellDef>Akcije</th><td mat-cell *matCellDef="let row"><button mat-icon-button title="Uredi" (click)="edit(row.id)"><mat-icon>edit</mat-icon></button><button mat-icon-button title="Obriši" (click)="delete(row)"><mat-icon>delete</mat-icon></button></td></ng-container>
+      <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+      <tr mat-row *matRowDef="let row; columns: displayedColumns"></tr>
+      <tr class="mat-row" *matNoDataRow><td class="mat-cell empty" [attr.colspan]="displayedColumns.length">Nema rezervacija za odabrane filtere.</td></tr>
+    </table>
+    <!-- TODO (student): povezati paginator sa BE pagingom (length, pageIndex, pageSize, (page)). -->
+    <mat-paginator [pageSizeOptions]="[5, 10]"></mat-paginator>
+  </div>
+</section>

@@ -1,0 +1,18 @@
+# Node / Angular
+node_modules/
+dist/
+.angular/
+npm-debug.log
+yarn-error.log
+
+# .NET
+**/bin/
+**/obj/
+**/.vs/
+*.user
+Logs/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/

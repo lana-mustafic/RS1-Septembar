@@ -1,0 +1,12 @@
+<!-- KOSTUR. Layout je dat; validacija, poruke i popunjavanje forme su studentov posao. -->
+<section class="form-page">
+  <header><button mat-icon-button title="Nazad" (click)="cancel()"><mat-icon>arrow_back</mat-icon></button><div><h1>Uredi rezervaciju</h1><p>Izmijenite podatke i otkazanost rezervacije</p></div></header>
+  <form [formGroup]="form" (ngSubmit)="save()">
+    <mat-form-field appearance="outline"><mat-label>Oznaka</mat-label><input matInput formControlName="code"></mat-form-field>
+    <mat-form-field appearance="outline"><mat-label>Proizvod</mat-label><mat-select formControlName="productId">@for(product of products; track product.id){<mat-option [value]="product.id">{{product.name}} - {{product.price | number:'1.2-2'}} KM (zaliha {{product.stockQuantity}})</mat-option>}</mat-select></mat-form-field>
+    <mat-form-field appearance="outline"><mat-label>Količina</mat-label><input matInput type="number" step="1" formControlName="quantity"></mat-form-field>
+    <mat-form-field appearance="outline"><mat-label>Važi do</mat-label><input matInput type="date" formControlName="reservedUntilUtc"></mat-form-field>
+    <div class="toggle"><mat-checkbox formControlName="isCancelled">Otkazana</mat-checkbox><span>Otkazane rezervacije se ne računaju u zbir i samo se one mogu obrisati.</span></div>
+    <div class="actions"><button mat-button type="button" (click)="cancel()">Odustani</button><button mat-flat-button color="primary" type="submit"><mat-icon>save</mat-icon>Sačuvaj</button></div>
+  </form>
+</section>

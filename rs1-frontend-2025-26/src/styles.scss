@@ -1,0 +1,112 @@
+
+// Include theming for Angular Material with `mat.theme()`.
+// This Sass mixin will define CSS variables that are used for styling Angular Material
+// components according to the Material 3 design spec.
+// Learn more about theming and how to use it for your application's
+// custom components at https://material.angular.dev/guide/theming
+@use '@angular/material' as mat;
+
+html {
+  // Aplikacija je namjerno samo svijetla i ne prati sistemsku postavku.
+  // color-scheme mora stajati na istom elementu na kojem je ukljucen mat.theme(),
+  // jer se light-dark() u --mat-sys-* varijablama razrjesava po ovom elementu.
+  color-scheme: light;
+
+  @include mat.theme((
+    color: (
+      primary: mat.$azure-palette,
+      tertiary: mat.$blue-palette,
+      theme-type: light,
+    ),
+    typography: Roboto,
+    density: 0,
+  ));
+}
+
+body {
+  // Svijetla tema je fiksna; sistemska postavka se namjerno ne prati.
+  color-scheme: light;
+
+  // Boje su tvrdo upisane umjesto --mat-sys-* varijabli da prikaz ne zavisi
+  // od toga da li je racunar u tamnom rezimu.
+  background-color: #f6f8fb;
+  color: #1f2733;
+  font: var(--mat-sys-body-medium);
+
+  // Reset the user agent margin.
+  margin: 0;
+}
+
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: Roboto, "Helvetica Neue", sans-serif;
+}
+
+
+
+html, body { height: 100%; }
+body { margin: 0; font-family: Roboto, "Helvetica Neue", sans-serif; }
+
+
+// Add this to your global styles.scss
+
+// ===========================
+// TOASTER / SNACKBAR STYLES
+// ===========================
+
+.snackbar-success {
+  background-color: #4caf50 !important;
+  color: white !important;
+
+  .mat-mdc-snack-bar-label {
+    color: white !important;
+  }
+
+  .mat-mdc-button {
+    color: white !important;
+  }
+}
+
+.snackbar-error {
+  background-color: #f44336 !important;
+  color: white !important;
+
+  .mat-mdc-snack-bar-label {
+    color: white !important;
+  }
+
+  .mat-mdc-button {
+    color: white !important;
+  }
+}
+
+.snackbar-warning {
+  background-color: #ff9800 !important;
+  color: white !important;
+
+  .mat-mdc-snack-bar-label {
+    color: white !important;
+  }
+
+  .mat-mdc-button {
+    color: white !important;
+  }
+}
+
+.snackbar-info {
+  background-color: #2196f3 !important;
+  color: white !important;
+
+  .mat-mdc-snack-bar-label {
+    color: white !important;
+  }
+
+  .mat-mdc-button {
+    color: white !important;
+  }
+}

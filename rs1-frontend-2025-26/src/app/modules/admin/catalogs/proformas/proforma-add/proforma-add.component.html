@@ -1,0 +1,32 @@
+<!--
+  KOSTUR master-detail forme. Layout, FormArray i add/remove su dati.
+  Validacija, pregled iznosa i slanje na backend su studentov posao.
+-->
+<section class="form-page">
+  <header><button mat-icon-button title="Nazad" (click)="cancel()"><mat-icon>arrow_back</mat-icon></button><div><h1>Novi predračun</h1><p>Unesite kupca i stavke predračuna</p></div></header>
+  <form [formGroup]="form" (ngSubmit)="save()">
+    <div class="master">
+      <mat-form-field appearance="outline"><mat-label>Broj predračuna</mat-label><input matInput formControlName="number" placeholder="PR-0001"><mat-hint>5-20 znakova, prefiks PR-</mat-hint></mat-form-field>
+      <mat-form-field appearance="outline"><mat-label>Kupac</mat-label><input matInput formControlName="customerName" placeholder="Kupac d.o.o."></mat-form-field>
+      <mat-form-field appearance="outline"><mat-label>Napomena</mat-label><textarea matInput rows="2" formControlName="note" placeholder="Obavezna kada predračun ima više od 5 stavki"></textarea><mat-hint align="end">{{form.controls.note.value?.length || 0}}/500</mat-hint></mat-form-field>
+    </div>
+
+    <div class="items-header"><div><h2>Stavke predračuna</h2><span>{{items.length}} {{items.length === 1 ? 'stavka' : 'stavki'}}</span></div><button mat-stroked-button type="button" (click)="addItem()"><mat-icon>add</mat-icon>Dodaj stavku</button></div>
+    <div class="column-head"><span></span><span>Proizvod</span><span>Jedinična cijena</span><span>Količina</span><span>Iznos stavke</span><span></span></div>
+    <div class="items" formArrayName="items">
+      @for(item of items.controls; track item; let i=$index){
+        <div class="item-row" [formGroupName]="i">
+          <span class="index">{{i+1}}.</span>
+          <mat-form-field appearance="outline"><mat-label>Proizvod</mat-label><mat-select formControlName="productId">@for(product of products;track product.id){<mat-option [value]="product.id">{{product.name}}</mat-option>}</mat-select></mat-form-field>
+          <div class="readonly">{{productFor(i) ? (productFor(i)!.price | number:'1.2-2') + ' KM' : '-'}}</div>
+          <mat-form-field appearance="outline"><mat-label>Količina</mat-label><input matInput type="number" step="1" formControlName="quantity"></mat-form-field>
+          <div class="readonly amount">{{lineAmountFor(i) === null ? '-' : (lineAmountFor(i)! | number:'1.2-2') + ' KM'}}</div>
+          <button mat-icon-button type="button" title="Ukloni" (click)="removeItem(i)"><mat-icon>delete</mat-icon></button>
+        </div>
+      }
+    </div>
+    <!-- TODO (student): poruke o greskama forme (duplikat proizvoda, napomena, prazna kolekcija). -->
+    <div class="summary"><span>Ukupan iznos</span><strong>{{totalAmount() === null ? '-' : (totalAmount()! | number:'1.2-2') + ' KM'}}</strong></div>
+    <div class="actions"><button mat-button type="button" (click)="cancel()">Odustani</button><button mat-flat-button color="primary" type="submit" ><mat-icon>save</mat-icon>Sačuvaj predračun</button></div>
+  </form>
+</section>

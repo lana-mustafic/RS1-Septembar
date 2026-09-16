@@ -1,0 +1,22 @@
+<!--
+  KOSTUR. Layout je dat, paginator nije povezan.
+  Tabela prikazuje DEMO redove iz komponente.
+-->
+<section class="exam-page">
+  <header><div><h1>Predračuni</h1><p>Dokumenti sa unaprijed iskazanom cijenom za kupca</p></div><button mat-flat-button color="primary" (click)="add()"><mat-icon>add</mat-icon>Novi predračun</button></header>
+  <div class="table-wrap">
+    <div class="loading" *ngIf="isLoading">Učitavanje...</div>
+    <table mat-table [dataSource]="rows">
+      <ng-container matColumnDef="number"><th mat-header-cell *matHeaderCellDef>Broj predračuna</th><td mat-cell *matCellDef="let row"><strong>{{row.number}}</strong></td></ng-container>
+      <ng-container matColumnDef="createdAtUtc"><th mat-header-cell *matHeaderCellDef>Datum kreiranja</th><td mat-cell *matCellDef="let row">{{row.createdAtUtc | date:'dd.MM.yyyy':'UTC'}}</td></ng-container>
+      <ng-container matColumnDef="customerName"><th mat-header-cell *matHeaderCellDef>Kupac</th><td mat-cell *matCellDef="let row">{{row.customerName}}</td></ng-container>
+      <ng-container matColumnDef="itemsCount"><th mat-header-cell *matHeaderCellDef>Broj stavki</th><td mat-cell *matCellDef="let row">{{row.itemsCount}}</td></ng-container>
+      <ng-container matColumnDef="totalAmount"><th mat-header-cell *matHeaderCellDef>Ukupan iznos</th><td mat-cell *matCellDef="let row"><strong>{{row.totalAmount | number:'1.2-2'}} KM</strong></td></ng-container>
+      <ng-container matColumnDef="note"><th mat-header-cell *matHeaderCellDef>Napomena</th><td mat-cell *matCellDef="let row">{{row.note || '-'}}</td></ng-container>
+      <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr><tr mat-row *matRowDef="let row; columns:displayedColumns"></tr>
+      <tr class="mat-row" *matNoDataRow><td class="mat-cell empty" [attr.colspan]="displayedColumns.length">Još nema snimljenih predračuna.</td></tr>
+    </table>
+    <!-- TODO (student): povezati paginator sa BE pagingom (length, pageIndex, pageSize, (page)). -->
+    <mat-paginator [pageSizeOptions]="[5,10]"></mat-paginator>
+  </div>
+</section>

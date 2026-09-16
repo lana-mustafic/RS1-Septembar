@@ -1,0 +1,9 @@
+https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap
+https://fonts.googleapis.com/icon?family=Material+Icons
+https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/OFL.txt
+https://raw.githubusercontent.com/google/material-design-icons/master/LICENSE
+
+roboto-5639371f108f.ttf <- https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWuaabWmT.ttf
+roboto-d8dc5a5f3c90.ttf <- https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWubEbWmT.ttf
+roboto-c14c6f78e26d.ttf <- https://fonts.gstatic.com/s/roboto/v51/KFOMCnqEu92Fr1ME7kSn66aGLdTylUAMQXC89YmC2DPNWub2bWmT.ttf
+material-icons-c22ca6e4738d.ttf <- https://fonts.gstatic.com/s/materialicons/v145/flUhRq6tzZclQEJ-Vdg-IuiaDsNZ.ttf
