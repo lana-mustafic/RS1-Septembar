@@ -473,6 +473,8 @@ public sealed class ListProductReservationsQuery
 
 **Zašto `int?` i `bool?`:** prazan dropdown = svi proizvodi (`null`). Checkbox isključen = sva tri statusa (`null` ili `false`). Filtriraš **samo** kad je `OnlyActive == true`.
 
+`?` stoji na **upitu**, jer je filter opcioni. Na entitetu `ProductId` nema `?`: svaka rezervacija u bazi mora imati proizvod. Na create/update komandi `ProductId` je isto običan `int`, a `ProductId > 0` je tamo validacija (`.GreaterThan(0)`), ne filter liste.
+
 ### Provjera
 
 U Swaggeru kasnije moraš vidjeti `productId`, `onlyActive`, `paging.page`, `paging.pageSize`.
@@ -490,10 +492,10 @@ U Swaggeru kasnije moraš vidjeti `productId`, `onlyActive`, `paging.page`, `pag
 1. filtriraj i paginiraj u SQL
 2. zatim u memoriji pozovi `GetState` i `GetReservationValue`
 
-Jedna referentna vrijednost današnjeg datuma **po zahtjevu** (PDF):
+Jedna referentna vrijednost današnjeg datuma **po zahtjevu** (PDF). Ime je `todayUtc`, isto kao na augustu:
 
 ```csharp
-var utcToday = DateTime.UtcNow.Date;
+var todayUtc = DateTime.UtcNow.Date;
 ```
 
 ```csharp
@@ -506,25 +508,25 @@ public sealed class ListProductReservationsQueryHandler(IAppDbContext ctx)
         ListProductReservationsQuery request,
         CancellationToken ct)
     {
-        var utcToday = DateTime.UtcNow.Date;
+        var todayUtc = DateTime.UtcNow.Date;
 
-        var query = ctx.ProductReservations.AsNoTracking();
+        var q = ctx.ProductReservations.AsNoTracking();
 
-        if (request.ProductId is int productId)
-            query = query.Where(x => x.ProductId == productId);
+        if (request.ProductId is > 0)
+            q = q.Where(x => x.ProductId == request.ProductId);
 
         if (request.OnlyActive == true)
         {
-            query = query.Where(x =>
-                !x.IsCancelled &&
-                x.ReservedUntilUtc.Date >= utcToday);
+            q = q.Where(x => !x.IsCancelled && x.ReservedUntilUtc.Date >= todayUtc);
         }
 
-        var total = await query.CountAsync(ct);
-
-        var rows = await query
+        q = q
             .OrderByDescending(x => x.CreatedAtUtc)
-            .ThenByDescending(x => x.Id)
+            .ThenByDescending(x => x.Id);
+
+        var total = await q.CountAsync(ct);
+
+        var raw = await q
             .Skip(request.Paging.SkipCount)
             .Take(request.Paging.PageSize)
             .Select(x => new
@@ -540,18 +542,23 @@ public sealed class ListProductReservationsQueryHandler(IAppDbContext ctx)
             })
             .ToListAsync(ct);
 
-        var items = rows.Select(x => new ListProductReservationsQueryDto
+        var items = raw.Select(x =>
         {
-            Id = x.Id,
-            Code = x.Code,
-            ProductId = x.ProductId,
-            ProductName = x.ProductName,
-            ProductPrice = x.ProductPrice,
-            Quantity = x.Quantity,
-            ReservationValue = ProductReservationRules.GetReservationValue(x.ProductPrice, x.Quantity),
-            ReservedUntilUtc = x.ReservedUntilUtc,
-            IsCancelled = x.IsCancelled,
-            State = ProductReservationRules.GetState(x.IsCancelled, x.ReservedUntilUtc, utcToday)
+            var state = ProductReservationRules.GetState(x.IsCancelled, x.ReservedUntilUtc, todayUtc);
+
+            return new ListProductReservationsQueryDto
+            {
+                Id = x.Id,
+                Code = x.Code,
+                ProductId = x.ProductId,
+                ProductName = x.ProductName,
+                ProductPrice = x.ProductPrice,
+                Quantity = x.Quantity,
+                ReservationValue = ProductReservationRules.GetReservationValue(x.ProductPrice, x.Quantity),
+                ReservedUntilUtc = DateTime.SpecifyKind(x.ReservedUntilUtc, DateTimeKind.Utc),
+                IsCancelled = x.IsCancelled,
+                State = state
+            };
         }).ToList();
 
         return new PageResult<ListProductReservationsQueryDto>
@@ -567,9 +574,13 @@ public sealed class ListProductReservationsQueryHandler(IAppDbContext ctx)
 }
 ```
 
+**Zašto `is > 0`:** isto kao august. `request.ProductId` je `int?`. `is > 0` pušta samo stvarni id, pa se `Where` ne doda kad dropdown stoji na „Svi proizvodi“. Unutar `Where` ostaje `request.ProductId`. `is int productId` ne pišeš: `0` bi prošao i vratio praznu stranicu.
+
 **Zašto filter prije `Count`:** PDF: *„Oba filtera rade na backendu prije brojanja i paginacije.“* Ako filtriraš tek na frontendu, total će biti 12 umjesto 4.
 
-**Zašto `ReservedUntilUtc.Date >= utcToday`:** isto pravilo kao `GetState` za Aktivna. Ako `Date` u LINQ-u baci problem pri prevodu u SQL, koristi `x.ReservedUntilUtc >= utcToday` — seed datumi su ponoć UTC.
+**Zašto `ReservedUntilUtc.Date >= todayUtc`:** isto pravilo kao `GetState` za Aktivna. Ako `Date` u LINQ-u baci problem pri prevodu u SQL, koristi `x.ReservedUntilUtc >= todayUtc` — seed datumi su ponoć UTC.
+
+`SpecifyKind(..., Utc)` je isti razlog kao na augustu: date pipe sa `'UTC'` ne smije pomjeriti dan.
 
 **Ne filtriraj obrisane ručno.** Globalni query filter već radi `IsDeleted == false`.
 
@@ -596,10 +607,9 @@ Pozovi `GetState` i ovdje (PDF: *„student ih poziva iz svojih list i get handl
 ```csharp
 namespace Market.Application.Modules.Catalog.ProductReservations.Queries.GetById;
 
-public sealed class GetProductReservationByIdQuery
-    : IRequest<GetProductReservationByIdQueryDto>
+public sealed class GetProductReservationByIdQuery : IRequest<GetProductReservationByIdQueryDto>
 {
-    public int Id { get; set; }
+    public int Id { get; init; }
 }
 ```
 
@@ -633,7 +643,7 @@ public sealed class GetProductReservationByIdQueryHandler(IAppDbContext ctx)
         GetProductReservationByIdQuery request,
         CancellationToken ct)
     {
-        var utcToday = DateTime.UtcNow.Date;
+        var todayUtc = DateTime.UtcNow.Date;
 
         var row = await ctx.ProductReservations
             .AsNoTracking()
@@ -653,15 +663,17 @@ public sealed class GetProductReservationByIdQueryHandler(IAppDbContext ctx)
         if (row is null)
             throw new MarketNotFoundException($"Rezervacija (ID={request.Id}) nije pronađena.");
 
+        var state = ProductReservationRules.GetState(row.IsCancelled, row.ReservedUntilUtc, todayUtc);
+
         return new GetProductReservationByIdQueryDto
         {
             Id = row.Id,
             Code = row.Code,
             ProductId = row.ProductId,
             Quantity = row.Quantity,
-            ReservedUntilUtc = row.ReservedUntilUtc,
+            ReservedUntilUtc = DateTime.SpecifyKind(row.ReservedUntilUtc, DateTimeKind.Utc),
             IsCancelled = row.IsCancelled,
-            State = ProductReservationRules.GetState(row.IsCancelled, row.ReservedUntilUtc, utcToday),
+            State = state,
             ReservationValue = ProductReservationRules.GetReservationValue(row.Price, row.Quantity)
         };
     }
@@ -689,10 +701,10 @@ namespace Market.Application.Modules.Catalog.ProductReservations.Commands.Create
 
 public sealed class CreateProductReservationCommand : IRequest<int>
 {
-    public required string Code { get; set; }
-    public required int ProductId { get; set; }
-    public required int Quantity { get; set; }
-    public required DateTime ReservedUntilUtc { get; set; }
+    public required string Code { get; init; }
+    public required int ProductId { get; init; }
+    public required int Quantity { get; init; }
+    public required DateTime ReservedUntilUtc { get; init; }
 }
 ```
 
@@ -709,31 +721,32 @@ public sealed class CreateProductReservationCommandValidator
     public CreateProductReservationCommandValidator()
     {
         RuleFor(x => x.Code)
-            .Must(code =>
-            {
-                var v = code?.Trim() ?? string.Empty;
-                return v.Length is >= 5 and <= 20 && v.StartsWith("REZ-");
-            })
-            .WithMessage("Oznaka mora imati 5–20 znakova i počinjati sa REZ-.");
+            .Cascade(CascadeMode.Stop)
+            .NotEmpty().WithMessage("Oznaka je obavezna.")
+            .Must(code => code.Trim().Length is >= 5 and <= 20)
+                .WithMessage("Oznaka mora imati 5 do 20 znakova.")
+            .Must(code => code.Trim().StartsWith("REZ-", StringComparison.Ordinal))
+                .WithMessage("Oznaka mora počinjati sa REZ-.");
 
         RuleFor(x => x.ProductId)
             .GreaterThan(0)
             .WithMessage("Proizvod je obavezan.");
 
         RuleFor(x => x.Quantity)
-            .InclusiveBetween(
-                ProductReservationEntity.Constraints.QuantityMin,
-                ProductReservationEntity.Constraints.QuantityMax)
+            .InclusiveBetween(1, 1000)
             .WithMessage("Količina mora biti cijeli broj od 1 do 1000.");
 
         RuleFor(x => x.ReservedUntilUtc)
-            .Must(d => d.Date >= DateTime.UtcNow.Date)
-            .WithMessage("Datum važenja mora biti današnji ili budući UTC datum.");
+            .Cascade(CascadeMode.Stop)
+            .Must(date => date != default)
+                .WithMessage("Datum važenja je obavezan.")
+            .Must(date => date.Date >= DateTime.UtcNow.Date)
+                .WithMessage("Datum važenja mora biti današnji ili budući UTC datum.");
     }
 }
 ```
 
-**Zašto `StartsWith("REZ-")` bez `StringComparison`:** PDF kaže **case-sensitive**. `rez-0001` mora pasti.
+**Zašto `StartsWith(..., StringComparison.Ordinal)`:** PDF kaže **case-sensitive**. `REZ-` prolazi, `rez-` ne prolazi. `CascadeMode.Stop` zaustavlja dalja pravila ako je oznaka prazna, pa se `Trim()` ne zove na `null`.
 
 **Zašto datum samo ovdje:** PDF: *„Pri kreiranju mora biti današnji ili budući UTC datum. Pri izmjeni se datum ne provjerava dodatno.“*
 
@@ -754,6 +767,8 @@ Tri stvari koje validator ne radi (idu u handler):
 3. Zbir aktivnih + nova količina ≤ `StockQuantity` → **409**
 
 ```csharp
+using FluentValidation.Results;
+
 namespace Market.Application.Modules.Catalog.ProductReservations.Commands.Create;
 
 public sealed class CreateProductReservationCommandHandler(IAppDbContext ctx)
@@ -761,39 +776,40 @@ public sealed class CreateProductReservationCommandHandler(IAppDbContext ctx)
 {
     public async Task<int> Handle(CreateProductReservationCommand request, CancellationToken ct)
     {
+        var todayUtc = DateTime.UtcNow.Date;
         var code = request.Code.Trim();
-        var utcToday = DateTime.UtcNow.Date;
 
         var product = await ctx.Products
-            .FirstOrDefaultAsync(x => x.Id == request.ProductId, ct);
+            .AsNoTracking()
+            .Where(p => p.Id == request.ProductId)
+            .Select(p => new { p.StockQuantity })
+            .FirstOrDefaultAsync(ct);
 
         if (product is null)
         {
             throw new ValidationException(new[]
             {
-                new FluentValidation.Results.ValidationFailure(
-                    nameof(request.ProductId),
-                    "Proizvod ne postoji.")
+                new ValidationFailure(nameof(request.ProductId), "Proizvod ne postoji ili je obrisan.")
             });
         }
 
-        var codeExists = await ctx.ProductReservations
-            .AnyAsync(x => x.Code.ToLower() == code.ToLower(), ct);
+        var codeTaken = await ctx.ProductReservations.AnyAsync(
+            x => x.Code.ToLower() == code.ToLower(),
+            ct);
 
-        if (codeExists)
+        if (codeTaken)
             throw new MarketConflictException("Oznaka rezervacije već postoji.");
 
         var activeSum = await ctx.ProductReservations
-            .Where(x =>
-                x.ProductId == request.ProductId &&
-                !x.IsCancelled &&
-                x.ReservedUntilUtc.Date >= utcToday)
+            .Where(x => x.ProductId == request.ProductId
+                && !x.IsCancelled
+                && x.ReservedUntilUtc.Date >= todayUtc)
             .SumAsync(x => (int?)x.Quantity, ct) ?? 0;
 
         if (activeSum + request.Quantity > product.StockQuantity)
         {
             throw new MarketConflictException(
-                "Zbir aktivnih rezervacija ne smije preći zalihu proizvoda.");
+                "Zbir aktivnih rezervacija prelazi zalihu proizvoda.");
         }
 
         var entity = new ProductReservationEntity
@@ -801,12 +817,13 @@ public sealed class CreateProductReservationCommandHandler(IAppDbContext ctx)
             Code = code,
             ProductId = request.ProductId,
             Quantity = request.Quantity,
-            ReservedUntilUtc = request.ReservedUntilUtc.Date,
+            ReservedUntilUtc = request.ReservedUntilUtc,
             IsCancelled = false
         };
 
         ctx.ProductReservations.Add(entity);
         await ctx.SaveChangesAsync(ct);
+
         return entity.Id;
     }
 }
@@ -852,11 +869,11 @@ public sealed class UpdateProductReservationCommand : IRequest<Unit>
     [JsonIgnore]
     public int Id { get; set; }
 
-    public required string Code { get; set; }
-    public required int ProductId { get; set; }
-    public required int Quantity { get; set; }
-    public required DateTime ReservedUntilUtc { get; set; }
-    public required bool IsCancelled { get; set; }
+    public required string Code { get; init; }
+    public required int ProductId { get; init; }
+    public required int Quantity { get; init; }
+    public required DateTime ReservedUntilUtc { get; init; }
+    public required bool IsCancelled { get; init; }
 }
 ```
 
@@ -870,26 +887,26 @@ public sealed class UpdateProductReservationCommandValidator
 {
     public UpdateProductReservationCommandValidator()
     {
+        RuleFor(x => x.Id).GreaterThan(0);
+
         RuleFor(x => x.Code)
-            .Must(code =>
-            {
-                var v = code?.Trim() ?? string.Empty;
-                return v.Length is >= 5 and <= 20 && v.StartsWith("REZ-");
-            })
-            .WithMessage("Oznaka mora imati 5–20 znakova i počinjati sa REZ-.");
+            .Cascade(CascadeMode.Stop)
+            .NotEmpty().WithMessage("Oznaka je obavezna.")
+            .Must(code => code.Trim().Length is >= 5 and <= 20)
+                .WithMessage("Oznaka mora imati 5 do 20 znakova.")
+            .Must(code => code.Trim().StartsWith("REZ-", StringComparison.Ordinal))
+                .WithMessage("Oznaka mora počinjati sa REZ-.");
 
         RuleFor(x => x.ProductId)
             .GreaterThan(0)
             .WithMessage("Proizvod je obavezan.");
 
         RuleFor(x => x.Quantity)
-            .InclusiveBetween(
-                ProductReservationEntity.Constraints.QuantityMin,
-                ProductReservationEntity.Constraints.QuantityMax)
+            .InclusiveBetween(1, 1000)
             .WithMessage("Količina mora biti cijeli broj od 1 do 1000.");
 
         RuleFor(x => x.ReservedUntilUtc)
-            .NotEmpty()
+            .Must(date => date != default)
             .WithMessage("Datum važenja je obavezan.");
     }
 }
@@ -910,6 +927,8 @@ Razlike u odnosu na create:
 - **ne diraj** `CreatedAtUtc`
 
 ```csharp
+using FluentValidation.Results;
+
 namespace Market.Application.Modules.Catalog.ProductReservations.Commands.Update;
 
 public sealed class UpdateProductReservationCommandHandler(IAppDbContext ctx)
@@ -917,56 +936,58 @@ public sealed class UpdateProductReservationCommandHandler(IAppDbContext ctx)
 {
     public async Task<Unit> Handle(UpdateProductReservationCommand request, CancellationToken ct)
     {
+        var todayUtc = DateTime.UtcNow.Date;
+        var code = request.Code.Trim();
+
         var entity = await ctx.ProductReservations
             .FirstOrDefaultAsync(x => x.Id == request.Id, ct);
 
         if (entity is null)
             throw new MarketNotFoundException($"Rezervacija (ID={request.Id}) nije pronađena.");
 
-        var code = request.Code.Trim();
-        var utcToday = DateTime.UtcNow.Date;
-
         var product = await ctx.Products
-            .FirstOrDefaultAsync(x => x.Id == request.ProductId, ct);
+            .AsNoTracking()
+            .Where(p => p.Id == request.ProductId)
+            .Select(p => new { p.StockQuantity })
+            .FirstOrDefaultAsync(ct);
 
         if (product is null)
         {
             throw new ValidationException(new[]
             {
-                new FluentValidation.Results.ValidationFailure(
-                    nameof(request.ProductId),
-                    "Proizvod ne postoji.")
+                new ValidationFailure(nameof(request.ProductId), "Proizvod ne postoji ili je obrisan.")
             });
         }
 
-        var codeExists = await ctx.ProductReservations
-            .AnyAsync(x => x.Id != request.Id && x.Code.ToLower() == code.ToLower(), ct);
+        var codeTaken = await ctx.ProductReservations.AnyAsync(
+            x => x.Id != request.Id && x.Code.ToLower() == code.ToLower(),
+            ct);
 
-        if (codeExists)
+        if (codeTaken)
             throw new MarketConflictException("Oznaka rezervacije već postoji.");
 
         if (!request.IsCancelled)
         {
             var activeSum = await ctx.ProductReservations
-                .Where(x =>
-                    x.Id != request.Id &&
-                    x.ProductId == request.ProductId &&
-                    !x.IsCancelled &&
-                    x.ReservedUntilUtc.Date >= utcToday)
+                .Where(x => x.Id != request.Id
+                    && x.ProductId == request.ProductId
+                    && !x.IsCancelled
+                    && x.ReservedUntilUtc.Date >= todayUtc)
                 .SumAsync(x => (int?)x.Quantity, ct) ?? 0;
 
             if (activeSum + request.Quantity > product.StockQuantity)
             {
                 throw new MarketConflictException(
-                    "Zbir aktivnih rezervacija ne smije preći zalihu proizvoda.");
+                    "Zbir aktivnih rezervacija prelazi zalihu proizvoda.");
             }
         }
 
         entity.Code = code;
         entity.ProductId = request.ProductId;
         entity.Quantity = request.Quantity;
-        entity.ReservedUntilUtc = request.ReservedUntilUtc.Date;
+        entity.ReservedUntilUtc = request.ReservedUntilUtc;
         entity.IsCancelled = request.IsCancelled;
+        // CreatedAtUtc NE DIRATI
 
         await ctx.SaveChangesAsync(ct);
         return Unit.Value;
@@ -1007,7 +1028,7 @@ namespace Market.Application.Modules.Catalog.ProductReservations.Commands.Delete
 
 public sealed class DeleteProductReservationCommand : IRequest<Unit>
 {
-    public required int Id { get; set; }
+    public required int Id { get; init; }
 }
 ```
 
@@ -1028,10 +1049,14 @@ public sealed class DeleteProductReservationCommandHandler(IAppDbContext ctx)
             throw new MarketNotFoundException($"Rezervacija (ID={request.Id}) nije pronađena.");
 
         if (!entity.IsCancelled)
-            throw new MarketConflictException("Brisati se smije samo otkazana rezervacija.");
+        {
+            throw new MarketConflictException(
+                "Rezervacija se može obrisati samo ako je otkazana.");
+        }
 
         ctx.ProductReservations.Remove(entity);
         await ctx.SaveChangesAsync(ct);
+
         return Unit.Value;
     }
 }
@@ -1076,13 +1101,18 @@ namespace Market.API.Controllers;
 public sealed class ProductReservationsController(ISender sender) : ControllerBase
 {
     [HttpGet]
-    public Task<PageResult<ListProductReservationsQueryDto>> List(
+    public async Task<PageResult<ListProductReservationsQueryDto>> List(
         [FromQuery] ListProductReservationsQuery query,
-        CancellationToken ct) => sender.Send(query, ct);
+        CancellationToken ct)
+    {
+        return await sender.Send(query, ct);
+    }
 
     [HttpGet("{id:int}")]
-    public Task<GetProductReservationByIdQueryDto> GetById(int id, CancellationToken ct)
-        => sender.Send(new GetProductReservationByIdQuery { Id = id }, ct);
+    public async Task<GetProductReservationByIdQueryDto> GetById(int id, CancellationToken ct)
+    {
+        return await sender.Send(new GetProductReservationByIdQuery { Id = id }, ct);
+    }
 
     [HttpPost]
     public async Task<ActionResult<int>> Create(
@@ -1090,7 +1120,7 @@ public sealed class ProductReservationsController(ISender sender) : ControllerBa
         CancellationToken ct)
     {
         var id = await sender.Send(command, ct);
-        return CreatedAtAction(nameof(GetById), new { id }, id);
+        return CreatedAtAction(nameof(GetById), new { id }, new { id });
     }
 
     [HttpPut("{id:int}")]
@@ -1113,7 +1143,7 @@ public sealed class ProductReservationsController(ISender sender) : ControllerBa
 
 **Zašto `command.Id = id`:** PDF i postojeći projekat: Id iz rute ima prednost.
 
-**Zašto treći argument `id` a ne `new { id }`:** da body bude broj, jer frontend radi `post<number>`.
+**Zašto `new { id }`:** isti `CreatedAtAction` obrazac kao kategorije i august. Frontend ne čita body, samo čeka uspjeh.
 
 ### Provjera — NE IDI NA FRONTEND DOK OVO NE RADI
 
@@ -1261,8 +1291,8 @@ export class ProductReservationsApiService {
     return this.http.get<GetProductReservationByIdQueryDto>(`${this.baseUrl}/${id}`);
   }
 
-  create(payload: CreateProductReservationCommand): Observable<number> {
-    return this.http.post<number>(this.baseUrl, payload);
+  create(payload: CreateProductReservationCommand): Observable<{ id: number } | number> {
+    return this.http.post<{ id: number } | number>(this.baseUrl, payload);
   }
 
   update(id: number, payload: UpdateProductReservationCommand): Observable<void> {
@@ -1291,10 +1321,10 @@ export class ProductReservationsApiService {
 
 Layout ostaje. Dodaš bindinge koje TODO traži.
 
-1. `mat-select` → `[(ngModel)]="productId"` + `(ngModelChange)="filtersChanged()"`
-2. `mat-checkbox` → `[(ngModel)]="onlyActive"` + `(ngModelChange)="filtersChanged()"`
-3. paginator → `length`, `pageIndex`, `pageSize`, `(page)`
-4. Obriši → `[disabled]="row.state !== stateType.Otkazana"`
+1. `mat-select` → `[(ngModel)]="productId"` + `(selectionChange)="filtersChanged()"`
+2. `mat-checkbox` → `[(ngModel)]="onlyActive"` + `(change)="filtersChanged()"`
+3. paginator → `length`, `pageIndex` je `page - 1`, `pageSize`, `(page)`
+4. Obriši → `[disabled]="!row.isCancelled"` (isto mjesto kao augustov `[disabled]="row.isEnabled"`)
 
 `FormsModule` je već exportovan iz `SharedModule`, pa `ngModel` radi.
 
@@ -1304,14 +1334,14 @@ Zamijeni blok filtera, akcije i paginator ovako (ostatak tabele ne diraj):
 <div class="filters">
   <mat-form-field appearance="outline">
     <mat-label>Proizvod</mat-label>
-    <mat-select [(ngModel)]="productId" (ngModelChange)="filtersChanged()">
+    <mat-select [(ngModel)]="productId" (selectionChange)="filtersChanged()">
       <mat-option [value]="null">Svi proizvodi</mat-option>
       @for (product of products; track product.id) {
         <mat-option [value]="product.id">{{ product.name }}</mat-option>
       }
     </mat-select>
   </mat-form-field>
-  <mat-checkbox [(ngModel)]="onlyActive" (ngModelChange)="filtersChanged()">
+  <mat-checkbox [(ngModel)]="onlyActive" (change)="filtersChanged()">
     Samo aktivne
   </mat-checkbox>
 </div>
@@ -1326,7 +1356,7 @@ Akcije:
 <button
   mat-icon-button
   title="Obriši"
-  [disabled]="row.state !== stateType.Otkazana"
+  [disabled]="!row.isCancelled"
   (click)="delete(row)">
   <mat-icon>delete</mat-icon>
 </button>
@@ -1337,10 +1367,10 @@ Paginator:
 ```html
 <mat-paginator
   [length]="totalItems"
-  [pageIndex]="pageIndex"
+  [pageIndex]="page - 1"
   [pageSize]="pageSize"
   [pageSizeOptions]="[5, 10]"
-  (page)="pageChanged($event)">
+  (page)="onPage($event)">
 </mat-paginator>
 ```
 
@@ -1356,7 +1386,7 @@ Dugme Obriši na DEMO otkazanom redu izgleda aktivno, na aktivnom sivo — još 
 
 **Fajl:** `product-reservations.component.ts`
 
-Angular paginator je **0-based** (`pageIndex`). Backend `Paging.Page` je **1-based**.
+`page` u komponenti je **1-based**, isto kao backend. Paginatorov `pageIndex` je 0-based, zato u HTML-u ide `page - 1`, a u `onPage` nazad `event.pageIndex + 1`.
 
 ```ts
 import { Component, inject, OnInit } from '@angular/core';
@@ -1371,10 +1401,10 @@ import {
   RESERVATION_STATE_LABELS,
   ReservationStateType,
 } from '../../../../api-services/product-reservations/product-reservations-api.models';
-import { DialogHelperService } from '../../../shared/services/dialog-helper.service';
-import { DialogButton, DialogType } from '../../../shared/models/dialog-config.model';
 import { ToasterService } from '../../../../core/services/toaster.service';
 import { getErrorMessage } from '../../../../core/interceptors/error-logging-interceptor.service';
+import { DialogHelperService } from '../../../shared/services/dialog-helper.service';
+import { DialogButton, DialogType } from '../../../shared/models/dialog-config.model';
 
 @Component({
   selector: 'app-product-reservations',
@@ -1383,11 +1413,11 @@ import { getErrorMessage } from '../../../../core/interceptors/error-logging-int
   styleUrl: './product-reservations.component.scss',
 })
 export class ProductReservationsComponent implements OnInit {
+  private readonly router = inject(Router);
   private readonly api = inject(ProductReservationsApiService);
   private readonly productsApi = inject(ExamProductsApiService);
-  private readonly router = inject(Router);
-  private readonly dialogHelper = inject(DialogHelperService);
   private readonly toaster = inject(ToasterService);
+  private readonly dialog = inject(DialogHelperService);
 
   readonly displayedColumns = [
     'code', 'product', 'price', 'quantity', 'value', 'reservedUntil', 'state', 'actions',
@@ -1400,17 +1430,13 @@ export class ProductReservationsComponent implements OnInit {
 
   productId: number | null = null;
   onlyActive = false;
-
-  totalItems = 0;
+  page = 1;
   pageSize = 5;
-  pageIndex = 0;
+  totalItems = 0;
   isLoading = false;
 
   ngOnInit(): void {
-    this.productsApi.lookup().subscribe({
-      next: (items) => (this.products = items),
-      error: (err) => this.toaster.error(getErrorMessage(err)),
-    });
+    this.loadProducts();
     this.load();
   }
 
@@ -1418,9 +1444,65 @@ export class ProductReservationsComponent implements OnInit {
     return this.stateLabels[state];
   }
 
-  load(): void {
+  add(): void {
+    this.router.navigate(['/admin/product-reservations/add']);
+  }
+
+  edit(id: number): void {
+    this.router.navigate(['/admin/product-reservations/edit', id]);
+  }
+
+  filtersChanged(): void {
+    this.page = 1;
+    this.load();
+  }
+
+  onPage(event: PageEvent): void {
+    this.page = event.pageIndex + 1;
+    this.pageSize = event.pageSize;
+    this.load();
+  }
+
+  delete(row: ListProductReservationsQueryDto): void {
+    if (!row.isCancelled) {
+      return;
+    }
+
+    this.dialog.open({
+      type: DialogType.WARNING,
+      title: 'Potvrda brisanja',
+      message: `Da li želite obrisati rezervaciju ${row.code}?`,
+      icon: 'delete_forever',
+      buttons: [
+        { type: DialogButton.CANCEL },
+        { type: DialogButton.DELETE, color: 'warn' },
+      ],
+    }).subscribe(result => {
+      if (!result || result.button !== DialogButton.DELETE) {
+        return;
+      }
+
+      this.api.delete(row.id).subscribe({
+        next: () => {
+          this.toaster.success('Rezervacija je obrisana.');
+          this.page = 1;
+          this.load();
+        },
+        error: (err) => this.toaster.error(getErrorMessage(err)),
+      });
+    });
+  }
+
+  private loadProducts(): void {
+    this.productsApi.lookup().subscribe({
+      next: (items) => (this.products = items),
+      error: (err) => this.toaster.error(getErrorMessage(err)),
+    });
+  }
+
+  private load(): void {
     const request = new ListProductReservationsRequest();
-    request.paging.page = this.pageIndex + 1;
+    request.paging.page = this.page;
     request.paging.pageSize = this.pageSize;
     request.productId = this.productId;
     request.onlyActive = this.onlyActive ? true : null;
@@ -1438,66 +1520,16 @@ export class ProductReservationsComponent implements OnInit {
       },
     });
   }
-
-  filtersChanged(): void {
-    this.pageIndex = 0;
-    this.load();
-  }
-
-  pageChanged(event: PageEvent): void {
-    this.pageIndex = event.pageIndex;
-    this.pageSize = event.pageSize;
-    this.load();
-  }
-
-  add(): void {
-    this.router.navigate(['/admin/product-reservations/add']);
-  }
-
-  edit(id: number): void {
-    this.router.navigate(['/admin/product-reservations/edit', id]);
-  }
-
-  delete(row: ListProductReservationsQueryDto): void {
-    if (row.state !== ReservationStateType.Otkazana) {
-      return;
-    }
-
-    this.dialogHelper
-      .open({
-        type: DialogType.WARNING,
-        title: 'Potvrda brisanja',
-        message: `Da li ste sigurni da želite obrisati rezervaciju ${row.code}?`,
-        icon: 'delete_forever',
-        buttons: [
-          { type: DialogButton.CANCEL },
-          { type: DialogButton.DELETE, color: 'warn' },
-        ],
-      })
-      .subscribe((result) => {
-        if (result?.button !== DialogButton.DELETE) {
-          return;
-        }
-
-        this.api.delete(row.id).subscribe({
-          next: () => {
-            this.toaster.success(`Rezervacija ${row.code} je obrisana.`);
-            this.load();
-          },
-          error: (err) => this.toaster.error(getErrorMessage(err)),
-        });
-      });
-  }
 }
 ```
 
 **Zašto `getErrorMessage(err)`:** PDF: *„Backend poruku greške prikazati onako kako je backend vraća, ne generičkim tekstom.“* Helper čita `error.error.message`. Interceptor **samo loguje** — toast ide iz komponente.
 
-**Zašto `pageIndex = 0` u `filtersChanged`:** PDF: promjena filtera vraća na **prvu stranicu**.
+**Zašto `page = 1` u `filtersChanged` i poslije brisanja:** PDF: promjena filtera vraća na **prvu stranicu**. Poslije brisanja lista se osvježi uz iste filtere, sa prve stranice — isti tok kao na augustu.
 
-**Zašto `onlyActive ? true : null`:** da isključeni checkbox ne šalje `onlyActive=false` ako želiš „sve“. Handler ionako filtrira samo kad je `== true`.
+**Zašto `onlyActive ? true : null`:** da isključeni checkbox ne šalje `onlyActive=false`. Handler filtrira samo kad je `== true`. `buildHttpParams` preskače `null`.
 
-**Zašto otvoreni `dialogHelper.open` umjesto `confirmDelete`:** `confirmDelete` koristi i18n ključeve. `open` s `title`/`message` radi bez prevoda.
+**Zašto `dialog.open` umjesto `confirmDelete`:** `confirmDelete` koristi i18n ključeve. `open` s `message` daje tačan tekst sa oznakom. Odustajanje (`CANCEL`) ne zove API.
 
 **Odustajanje:** ako korisnik klikne Cancel, `result.button` nije `DELETE` — ništa se ne zove. PDF to boduje.
 
@@ -1525,49 +1557,49 @@ Pravila iz PDF-a:
 - Količina cijeli broj 1–1000
 - Datum obavezan; **samo pri create** danas ili budućnost
 
+Isti oblik kao na augustu: `ValidatorFn` na **dnu** TS fajla, a poruke u metodi `errorText` unutar klase. Ne pravi poseban fajl.
+
 ```ts
-import { AbstractControl, ValidationErrors, Validators } from '@angular/forms';
+import { AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
 
-function rezCodeValidator(control: AbstractControl): ValidationErrors | null {
-  const v = (control.value ?? '').toString().trim();
-  if (!v) return { required: true };
-  if (v.length < 5 || v.length > 20) return { codeLength: true };
-  if (!v.startsWith('REZ-')) return { codePrefix: true };
-  return null;
+function reservationCodeValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = (control.value ?? '').toString();
+    if (!value.trim()) return { required: true };
+    const trimmed = value.trim();
+    if (trimmed.length < 5 || trimmed.length > 20) return { codeLength: true };
+    if (!trimmed.startsWith('REZ-')) return { codePrefix: true };
+    return null;
+  };
 }
 
-function integerQuantityValidator(control: AbstractControl): ValidationErrors | null {
-  const v = control.value;
-  if (v === null || v === undefined || v === '') return { required: true };
-  if (!Number.isInteger(Number(v))) return { integer: true };
-  const n = Number(v);
-  if (n < 1 || n > 1000) return { quantityRange: true };
-  return null;
+function integerValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (value === null || value === undefined || value === '') return null;
+    return Number.isInteger(Number(value)) ? null : { integer: true };
+  };
 }
 
-function todayOrFutureUtcValidator(control: AbstractControl): ValidationErrors | null {
-  const v = (control.value ?? '').toString();
-  if (!v) return { required: true };
-  const selected = v.substring(0, 10);
-  const now = new Date();
-  const today = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
-  if (selected < today) return { pastDate: true };
-  return null;
+function notPastUtcDateValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = (control.value ?? '').toString();
+    if (!value) return null;
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+      .toISOString()
+      .slice(0, 10);
+    return value < today ? { pastDate: true } : null;
+  };
 }
 
-function fieldError(control: AbstractControl | null): string {
-  if (!control || !control.errors || !(control.touched || control.dirty)) return '';
-  if (control.errors['required']) return 'Polje je obavezno.';
-  if (control.errors['codeLength']) return 'Oznaka mora imati 5–20 znakova.';
-  if (control.errors['codePrefix']) return 'Oznaka mora počinjati sa REZ-.';
-  if (control.errors['integer']) return 'Količina mora biti cijeli broj.';
-  if (control.errors['quantityRange']) return 'Količina mora biti od 1 do 1000.';
-  if (control.errors['pastDate']) return 'Datum mora biti današnji ili budući.';
-  return 'Neispravna vrijednost.';
+function toUtcDateOnly(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toISOString();
 }
 ```
 
-Ove funkcije zalijepi na vrh add/edit fajla (ili u jedan mali `product-reservation-form.validators.ts` pored komponenti).
+`input type="date"` daje `yyyy-MM-dd`. `toUtcDateOnly` šalje ponoć UTC, da se dan ne pomjeri — ista uloga kao augustov helper za datepicker.
 
 ---
 
@@ -1586,7 +1618,7 @@ Primjer za oznaku:
   <mat-label>Oznaka</mat-label>
   <input matInput formControlName="code" placeholder="REZ-0001">
   <mat-hint>5-20 znakova, prefiks REZ-</mat-hint>
-  <mat-error>{{ errorOf('code') }}</mat-error>
+  <mat-error>{{ errorText('code') }}</mat-error>
 </mat-form-field>
 ```
 
@@ -1614,14 +1646,13 @@ Hint ispod forme već postoji: *„Zbir aktivnih rezervacija ne smije preći zal
 
 ```ts
 import { Component, inject, OnInit } from '@angular/core';
-import { FormBuilder, Validators } from '@angular/forms';
+import { AbstractControl, FormBuilder, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ExamProductsApiService } from '../../../../../api-services/exam-products/exam-products-api.service';
 import { ExamProductLookupItem } from '../../../../../api-services/exam-products/exam-products-api.models';
 import { ProductReservationsApiService } from '../../../../../api-services/product-reservations/product-reservations-api.service';
 import { ToasterService } from '../../../../../core/services/toaster.service';
 import { getErrorMessage } from '../../../../../core/interceptors/error-logging-interceptor.service';
-// + validator funkcije iz Koraka 16
 
 @Component({
   selector: 'app-product-reservation-add',
@@ -1631,19 +1662,24 @@ import { getErrorMessage } from '../../../../../core/interceptors/error-logging-
 })
 export class ProductReservationAddComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
+  private readonly router = inject(Router);
   private readonly api = inject(ProductReservationsApiService);
   private readonly productsApi = inject(ExamProductsApiService);
-  private readonly router = inject(Router);
   private readonly toaster = inject(ToasterService);
 
   products: ExamProductLookupItem[] = [];
   isSaving = false;
 
   readonly form = this.fb.group({
-    code: ['', [rezCodeValidator]],
-    productId: [null as number | null, [Validators.required]],
-    quantity: [null as number | null, [integerQuantityValidator]],
-    reservedUntilUtc: ['', [todayOrFutureUtcValidator]],
+    code: ['', [reservationCodeValidator()]],
+    productId: [null as number | null, [Validators.required, Validators.min(1)]],
+    quantity: [null as number | null, [
+      Validators.required,
+      Validators.min(1),
+      Validators.max(1000),
+      integerValidator(),
+    ]],
+    reservedUntilUtc: ['', [Validators.required, notPastUtcDateValidator()]],
   });
 
   ngOnInit(): void {
@@ -1651,10 +1687,6 @@ export class ProductReservationAddComponent implements OnInit {
       next: (items) => (this.products = items),
       error: (err) => this.toaster.error(getErrorMessage(err)),
     });
-  }
-
-  errorOf(name: string): string {
-    return fieldError(this.form.get(name));
   }
 
   cancel(): void {
@@ -1667,17 +1699,16 @@ export class ProductReservationAddComponent implements OnInit {
       return;
     }
 
-    const v = this.form.getRawValue();
+    const raw = this.form.getRawValue();
     this.isSaving = true;
 
     this.api.create({
-      code: (v.code ?? '').trim(),
-      productId: Number(v.productId),
-      quantity: Number(v.quantity),
-      reservedUntilUtc: v.reservedUntilUtc as string,
+      code: (raw.code ?? '').trim(),
+      productId: raw.productId!,
+      quantity: Number(raw.quantity),
+      reservedUntilUtc: toUtcDateOnly(raw.reservedUntilUtc!),
     }).subscribe({
       next: () => {
-        this.isSaving = false;
         this.toaster.success('Rezervacija je snimljena.');
         this.router.navigate(['/admin/product-reservations']);
       },
@@ -1687,6 +1718,57 @@ export class ProductReservationAddComponent implements OnInit {
       },
     });
   }
+
+  errorText(name: string): string {
+    const c = this.form.get(name);
+    if (!c || !c.errors || !(c.touched || c.dirty)) {
+      return '';
+    }
+    if (name === 'quantity' && (c.errors['min'] || c.errors['max'] || c.errors['integer'])) {
+      return 'Količina mora biti cijeli broj od 1 do 1000.';
+    }
+    if (c.errors['required'] || c.errors['min']) return 'Polje je obavezno.';
+    if (c.errors['codeLength']) return 'Oznaka mora imati 5 do 20 znakova.';
+    if (c.errors['codePrefix']) return 'Oznaka mora počinjati sa REZ-.';
+    if (c.errors['pastDate']) return 'Datum mora biti današnji ili budući.';
+    return 'Neispravna vrijednost.';
+  }
+}
+
+function toUtcDateOnly(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toISOString();
+}
+
+function reservationCodeValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = (control.value ?? '').toString();
+    if (!value.trim()) return { required: true };
+    const trimmed = value.trim();
+    if (trimmed.length < 5 || trimmed.length > 20) return { codeLength: true };
+    if (!trimmed.startsWith('REZ-')) return { codePrefix: true };
+    return null;
+  };
+}
+
+function integerValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (value === null || value === undefined || value === '') return null;
+    return Number.isInteger(Number(value)) ? null : { integer: true };
+  };
+}
+
+function notPastUtcDateValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = (control.value ?? '').toString();
+    if (!value) return null;
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+      .toISOString()
+      .slice(0, 10);
+    return value < today ? { pastDate: true } : null;
+  };
 }
 ```
 
@@ -1694,9 +1776,7 @@ export class ProductReservationAddComponent implements OnInit {
 
 - uspjeh → toast + **povratak na listu**
 - greška → toast s backend porukom + **ostani na formi** (unosi ostaju jer ne resetuješ formu)
-- `isSaving` ponovo `false` da korisnik može pokušati opet
-
-`input type="date"` šalje `yyyy-MM-dd`. ASP.NET to veže na `DateTime`. Ne pretvaraj u lokalni Date objekt bez potrebe.
+- `isSaving` ostaje `true` samo dok traje zahtjev; u `error` se vraća na `false`
 
 ### Provjera
 
@@ -1715,7 +1795,7 @@ Isti `mat-error` i `[disabled]="form.invalid || isSaving"` kao na add.
 
 Checkbox `Otkazana` već ima `formControlName="isCancelled"`. Ne diraj tekst ispod njega — PDF ga već objašnjava.
 
-Datum na edit **nema** `todayOrFutureUtcValidator` — samo `Validators.required`.
+Datum na edit **nema** `notPastUtcDateValidator` — samo `Validators.required`.
 
 ---
 
@@ -1728,19 +1808,18 @@ Id je već u starteru: `Number(this.route.snapshot.paramMap.get('id'))`.
 Datum iz API-ja je ISO (`2026-09-20T00:00:00Z`). `input type="date"` hoće `yyyy-MM-dd`:
 
 ```ts
-reservedUntilUtc: dto.reservedUntilUtc.substring(0, 10)
+reservedUntilUtc: dto.reservedUntilUtc.slice(0, 10)
 ```
 
 ```ts
 import { Component, inject, OnInit } from '@angular/core';
-import { FormBuilder, Validators } from '@angular/forms';
+import { AbstractControl, FormBuilder, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ExamProductsApiService } from '../../../../../api-services/exam-products/exam-products-api.service';
 import { ExamProductLookupItem } from '../../../../../api-services/exam-products/exam-products-api.models';
 import { ProductReservationsApiService } from '../../../../../api-services/product-reservations/product-reservations-api.service';
 import { ToasterService } from '../../../../../core/services/toaster.service';
 import { getErrorMessage } from '../../../../../core/interceptors/error-logging-interceptor.service';
-// + isti rezCodeValidator, integerQuantityValidator, fieldError
 
 @Component({
   selector: 'app-product-reservation-edit',
@@ -1750,10 +1829,10 @@ import { getErrorMessage } from '../../../../../core/interceptors/error-logging-
 })
 export class ProductReservationEditComponent implements OnInit {
   private readonly fb = inject(FormBuilder);
+  private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly api = inject(ProductReservationsApiService);
   private readonly productsApi = inject(ExamProductsApiService);
-  private readonly router = inject(Router);
   private readonly toaster = inject(ToasterService);
 
   protected readonly id = Number(this.route.snapshot.paramMap.get('id'));
@@ -1763,9 +1842,14 @@ export class ProductReservationEditComponent implements OnInit {
   isLoading = false;
 
   readonly form = this.fb.group({
-    code: ['', [rezCodeValidator]],
-    productId: [null as number | null, [Validators.required]],
-    quantity: [null as number | null, [integerQuantityValidator]],
+    code: ['', [reservationCodeValidator()]],
+    productId: [null as number | null, [Validators.required, Validators.min(1)]],
+    quantity: [null as number | null, [
+      Validators.required,
+      Validators.min(1),
+      Validators.max(1000),
+      integerValidator(),
+    ]],
     reservedUntilUtc: ['', [Validators.required]],
     isCancelled: [false],
   });
@@ -1783,7 +1867,7 @@ export class ProductReservationEditComponent implements OnInit {
           code: dto.code,
           productId: dto.productId,
           quantity: dto.quantity,
-          reservedUntilUtc: dto.reservedUntilUtc.substring(0, 10),
+          reservedUntilUtc: dto.reservedUntilUtc.slice(0, 10),
           isCancelled: dto.isCancelled,
         });
         this.isLoading = false;
@@ -1793,10 +1877,6 @@ export class ProductReservationEditComponent implements OnInit {
         this.toaster.error(getErrorMessage(err));
       },
     });
-  }
-
-  errorOf(name: string): string {
-    return fieldError(this.form.get(name));
   }
 
   cancel(): void {
@@ -1809,18 +1889,17 @@ export class ProductReservationEditComponent implements OnInit {
       return;
     }
 
-    const v = this.form.getRawValue();
+    const raw = this.form.getRawValue();
     this.isSaving = true;
 
     this.api.update(this.id, {
-      code: (v.code ?? '').trim(),
-      productId: Number(v.productId),
-      quantity: Number(v.quantity),
-      reservedUntilUtc: v.reservedUntilUtc as string,
-      isCancelled: !!v.isCancelled,
+      code: (raw.code ?? '').trim(),
+      productId: raw.productId!,
+      quantity: Number(raw.quantity),
+      reservedUntilUtc: toUtcDateOnly(raw.reservedUntilUtc!),
+      isCancelled: !!raw.isCancelled,
     }).subscribe({
       next: () => {
-        this.isSaving = false;
         this.toaster.success('Rezervacija je izmijenjena.');
         this.router.navigate(['/admin/product-reservations']);
       },
@@ -1830,6 +1909,44 @@ export class ProductReservationEditComponent implements OnInit {
       },
     });
   }
+
+  errorText(name: string): string {
+    const c = this.form.get(name);
+    if (!c || !c.errors || !(c.touched || c.dirty)) {
+      return '';
+    }
+    if (name === 'quantity' && (c.errors['min'] || c.errors['max'] || c.errors['integer'])) {
+      return 'Količina mora biti cijeli broj od 1 do 1000.';
+    }
+    if (c.errors['required'] || c.errors['min']) return 'Polje je obavezno.';
+    if (c.errors['codeLength']) return 'Oznaka mora imati 5 do 20 znakova.';
+    if (c.errors['codePrefix']) return 'Oznaka mora počinjati sa REZ-.';
+    return 'Neispravna vrijednost.';
+  }
+}
+
+function toUtcDateOnly(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).toISOString();
+}
+
+function reservationCodeValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = (control.value ?? '').toString();
+    if (!value.trim()) return { required: true };
+    const trimmed = value.trim();
+    if (trimmed.length < 5 || trimmed.length > 20) return { codeLength: true };
+    if (!trimmed.startsWith('REZ-')) return { codePrefix: true };
+    return null;
+  };
+}
+
+function integerValidator(): ValidatorFn {
+  return (control: AbstractControl): ValidationErrors | null => {
+    const value = control.value;
+    if (value === null || value === undefined || value === '') return null;
+    return Number.isInteger(Number(value)) ? null : { integer: true };
+  };
 }
 ```
 
@@ -1864,8 +1981,8 @@ export class ProductReservationEditComponent implements OnInit {
 Filteri i paging:
 
 ```
-promjena filtera → pageIndex=0 → GET sa productId/onlyActive/paging
-promjena paginatora → GET sa novim paging.page (pageIndex+1)
+promjena filtera → page=1 → GET sa productId/onlyActive/paging
+promjena paginatora → onPage → paging.page = pageIndex + 1
 ```
 
 Backend create/update:
@@ -1921,7 +2038,7 @@ Otkazane u seedu: `REZ-0003`, `REZ-0007`, `REZ-0011`. Samo njih smiješ obrisati
 | Simptom | Uzrok | Šta uraditi |
 |---------|-------|-------------|
 | DEMO redovi i dalje | `load()` prazan | spoji `api.list` |
-| Paginator ne mijenja podatke | nije `(page)` ili šalješ `pageIndex` umjesto `pageIndex+1` | backend page kreće od 1 |
+| Paginator ne mijenja podatke | nije `(page)="onPage($event)"` ili šalješ `pageIndex` umjesto `pageIndex + 1` | `page` u komponenti kreće od 1 |
 | `totalItems` uvijek 12 uz filter | filtriraš na FE ili nakon Take | filter **prije** Count |
 | `onlyActive` ostavi 5 umjesto 4 | uračunao si `REZ-0004` kao isteklu ili sabrao otkazane | danas = aktivna; otkazane van |
 | 409 na USB memoriji qty 10 | sabrao isteklu | u zbir samo `!IsCancelled && Date >= today` |
@@ -1933,14 +2050,14 @@ Otkazane u seedu: `REZ-0003`, `REZ-0007`, `REZ-0011`. Samo njih smiješ obrisati
 | Toast „Conflict. The operation…“ | nisi `getErrorMessage` | čitaj `error.error.message` |
 | 401 na API | nisi ulogovan / nije Staff | admin@market.local |
 | Forma se prazni poslije 409 | radiš `form.reset()` u error | nemoj |
-| Edit datum prazan | nisi `substring(0, 10)` | date input ne razumije ISO sa `T` |
+| Edit datum prazan | nisi `slice(0, 10)` | date input ne razumije ISO sa `T` |
 | `CreatedAtUtc` se promijeni | ručno ga setuješ u update | ne diraj ga |
 | Nova migracija | nisi smio | Modul 1 **ne** dira bazu |
 
 Ako `x.ReservedUntilUtc.Date` u LINQ baci runtime grešku (SQL translate):
 
 ```csharp
-x.ReservedUntilUtc >= utcToday
+x.ReservedUntilUtc >= todayUtc
 ```
 
 Seed i create handler koriste ponoć, pa je to ekvivalentno.
@@ -1987,7 +2104,7 @@ Seed i create handler koriste ponoć, pa je to ekvivalentno.
 1. **Swagger prvo.** Ako lista/filter/409 ne rade u Swaggeru, frontend neće spasiti bodove (71 je na BE).
 2. **Ne crtaj UI.** HTML je dat. Samo binding, validatori, HTTP.
 3. **Ne diraj proizvode.** Zaliha se čita, ne piše.
-4. **Jedna `utcToday` po requestu.**
+4. **Jedna `todayUtc` po requestu.**
 5. Ako zapneš: otvori `ProductCategories` i uradi **isti folder pattern** s drugim imenom.
 6. Ako ostane 15 minuta: lista + paging + create u Swaggeru + FE lista. To je već veliki dio bodova.
 
@@ -2005,7 +2122,7 @@ Seed i create handler koriste ponoć, pa je to ekvivalentno.
 | **Soft delete** | Red ostaje, `IsDeleted=1`, filter ga krije |
 | **409 Conflict** | Unique oznaka, prekoračena zaliha, delete neotkazane |
 | **Staff policy** | Admin/manager/employee smiju; `[Authorize(Policy = "Staff")]` |
-| **pageIndex** | Angular 0, 1, 2… → backend page 1, 2, 3… |
+| **page** | U komponenti 1, 2, 3… Paginatorov `pageIndex` je 0, 1, 2… |
 | **onlyActive** | Checkbox; `true` = samo status Aktivna |
 | **Trim** | Skini razmake prije dužine, prefixa i unique usporedbe |
 
