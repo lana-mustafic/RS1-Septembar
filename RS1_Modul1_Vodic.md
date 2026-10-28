@@ -760,11 +760,13 @@ Pogrešan prefix, količina 0, jučerašnji datum → 400. Još nema handler.
 
 **Fajl:** `CreateProductReservationCommandHandler.cs`
 
-Tri stvari koje validator ne radi (idu u handler):
+Redoslijed u handleru, isti kao kod ponuda:
 
-1. Proizvod postoji i nije obrisan → **400** (osnovna validacija)
-2. Jedinstvena oznaka (Trim, case-insensitive) → **409**
-3. Zbir aktivnih + nova količina ≤ `StockQuantity` → **409**
+1. Trim koda.
+2. Proizvod mora postojati (obrisane skida globalni filter). Ako ne postoji → **400**. Ovde ne ide `AnyAsync`: za zalihu treba `StockQuantity`, pa `Select` i `FirstOrDefaultAsync`.
+3. Jedinstvena oznaka, `ToLower`, među neobrisanim → **409**.
+4. Zbir aktivnih količina + nova količina ne smije preći zalihu → **409**. Aktivna = nije otkazana i `ReservedUntilUtc.Date >= todayUtc`.
+5. Snimi. `IsCancelled = false`. `CreatedAtUtc` ne postavljaj.
 
 ```csharp
 using FluentValidation.Results;
@@ -780,18 +782,15 @@ public sealed class CreateProductReservationCommandHandler(IAppDbContext ctx)
         var code = request.Code.Trim();
 
         var product = await ctx.Products
-            .AsNoTracking()
             .Where(p => p.Id == request.ProductId)
             .Select(p => new { p.StockQuantity })
             .FirstOrDefaultAsync(ct);
 
         if (product is null)
-        {
             throw new ValidationException(new[]
             {
                 new ValidationFailure(nameof(request.ProductId), "Proizvod ne postoji ili je obrisan.")
             });
-        }
 
         var codeTaken = await ctx.ProductReservations.AnyAsync(
             x => x.Code.ToLower() == code.ToLower(),
@@ -802,8 +801,8 @@ public sealed class CreateProductReservationCommandHandler(IAppDbContext ctx)
 
         var activeSum = await ctx.ProductReservations
             .Where(x => x.ProductId == request.ProductId
-                && !x.IsCancelled
-                && x.ReservedUntilUtc.Date >= todayUtc)
+                 && !x.IsCancelled
+                 && x.ReservedUntilUtc.Date >= todayUtc)
             .SumAsync(x => (int?)x.Quantity, ct) ?? 0;
 
         if (activeSum + request.Quantity > product.StockQuantity)
@@ -829,15 +828,13 @@ public sealed class CreateProductReservationCommandHandler(IAppDbContext ctx)
 }
 ```
 
-**Zašto `SumAsync((int?)x.Quantity) ?? 0`:** ako nema redova, `Sum` na praznom skupu integera zna baciti. Nullable suma vraća `null` → 0.
+`using FluentValidation.Results` ostaje: `ValidationFailure` nije u globalnom `using FluentValidation`. String `new ValidationException("...")` ne koristi. `MarketExceptionHandler` za 400 čita samo `Errors`, a taj konstruktor ostavi listu praznu, pa toast pokaže `Validation failed:`.
 
-**Zašto `IsCancelled = false`:** PDF: checkbox se pri dodavanju ne prikazuje; backend postavlja neotkazanost.
+**Zašto `SumAsync((int?)x.Quantity) ?? 0`:** ako nema redova, `Sum` na praznom skupu integera zna baciti. Nullable suma vraća `null` → 0. August ovdje ima `AnyAsync`, jer tamo pravilo pita postoji li već aktivna ponuda. Ovdje se količine sabiraju.
+
+**Zašto `IsCancelled = false`:** PDF: checkbox se pri dodavanju ne prikazuje; backend postavlja neotkazanost. Isti obrazac kao `IsEnabled = true` na ponudi.
 
 **Zašto ne postavljaš `CreatedAtUtc`:** `ApplyAuditAndSoftDelete` to radi sam.
-
-**Zašto `ValidationException` za proizvod, a `MarketConflictException` za oznaku/zalihu:** PDF dijeli 400 (osnovna validacija, uključujući postojanje proizvoda) i 409 (poslovni konflikti).
-
-Ako `using FluentValidation;` već imaš kroz GlobalUsings, `ValidationException` je ta iz FluentValidation (handler je mapira na 400).
 
 ### Provjera (kad bude kontroler)
 
